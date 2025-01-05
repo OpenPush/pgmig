@@ -1,0 +1,32 @@
+{
+    "name": "@openpush/pgmig",
+    "version": "0.0.0-beta.1",
+    "description": "A PostgreSQL migration library.",
+    "keywords": [
+        "postgres",
+        "postgres.js",
+        "pgsql",
+        "migration",
+        "migrations"
+    ],
+    "homepage": "https://github.com/OpenPush/pgmig#readme",
+    "bugs": {
+        "url": "https://github.com/OpenPush/pgmig/issues"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+ssh://git@github.com/OpenPush/pgmig.git"
+    },
+    "license": "MIT",
+    "author": {
+        "name": "LTDev LLC",
+        "url": "https://ltdev.llc/"
+    },
+    "main": "index.mjs",
+    "scripts": {
+        "deps": "npx npm-check-updates -u && npm install && npx depcheck"
+    },
+    "dependencies": {
+        "postgres": "^3.4.5"
+    }
+}
