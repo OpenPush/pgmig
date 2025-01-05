@@ -10,12 +10,12 @@ const rl = readline.createInterface({
 });
 
 // Wait for user input
-rl.question('Enter PostgreSQL connection string: ', async(con) => {
+rl.question('Enter PostgreSQL connection string: ', async (con) => {
     rl.close();
 
     // Create a postgres.js instance -- See https://github.com/porsager/postgres?tab=readme-ov-file#postgresurl-options
     let sql = postgres(con, {
-        onnotice: ()=>{
+        onnotice: () => {
             // Do something with the notice?
         },
     });
@@ -51,4 +51,10 @@ rl.question('Enter PostgreSQL connection string: ', async(con) => {
 
     // Close the connection if you're done with it
     await migrations.end();
+});
+
+// debug memory usage
+process.on('exit', () => {
+    let usage = process.memoryUsage();
+    console.log(`Memory usage: ${usage.rss / 1024 / 1024} MB`);
 });

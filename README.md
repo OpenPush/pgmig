@@ -1,6 +1,6 @@
 # PGMig
 
-A basic PostgreSQL migration library for [postgres.js](https://github.com/porsager/postgres) intended for use with [OpenPush](https://openpu.sh/). The goal is for simple `up` and `down` migrations; there is currently no rollback support.
+A basic PostgreSQL migration library for [postgres.js](https://github.com/porsager/postgres) intended for use with [OpenPush](https://openpu.sh/). The goal is for simple `up` and `down` migrations.
 
 ## Folder Structure
 

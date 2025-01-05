@@ -1,6 +1,6 @@
 {
     "name": "@openpush/pgmig",
-    "version": "0.0.0-beta.1",
+    "version": "0.0.0-beta.2",
     "description": "A PostgreSQL migration library.",
     "keywords": [
         "postgres",
@@ -26,7 +26,7 @@
     "scripts": {
         "deps": "npx npm-check-updates -u && npm install && npx depcheck"
     },
-    "dependencies": {
+    "devDependencies": {
         "postgres": "^3.4.5"
     }
 }

@@ -11,17 +11,18 @@ try {
     version = JSON.parse(readFileSync(join(baseDir, '/package.json')))?.version
 } catch { }
 
+// Export the pgmig function
 export default async function ({
     sql, // SQL connection (via postgres.js)
     paths = false, // Paths to search for migrations
     types = ['up', 'down'], // Which types of migrations to load
-    onApply = async () => { },
-    onBefore = async () => { },
-    onError = async () => { },
-    onFail = async () => { },
-    onFinish = async () => { },
-    onResult = async () => { },
-    onSkip = async () => { },
+    onApply = false,
+    onBefore = false,
+    onError = false,
+    onFail = false,
+    onFinish = false,
+    onResult = false,
+    onSkip = false,
 }) {
     try {
         // Validate the paths
@@ -56,18 +57,8 @@ export default async function ({
                 continue;
             }
 
-            // Read the source + checksum
-            let source = readFileSync(file, 'utf8'),
-                checksum = createHash('sha256').update(source).digest();
-
             // Add the migration to the list
-            list[type].push({
-                file,
-                index,
-                name,
-                source,
-                checksum
-            });
+            list[type].push({ file, index, name });
         }
 
         // Sort the migrations by index
@@ -78,81 +69,84 @@ export default async function ({
         async function execute(direction = 'up', specific = null) {
             try {
                 //  Begin the migrations
-                return await sql.begin(async (sql) => {
-                    // Get the migrations, do not mutate the primary list
-                    let migrations = [
-                        ...(list[direction] ?? [])
-                    ].filter((m => specific ? (Array.isArray(specific) ? specific : [specific]).includes(m.name) : true));
+                // Get the migrations, do not mutate the primary list
+                let migrations = [
+                    ...(list[direction] ?? [])
+                ].filter((m => specific ? (Array.isArray(specific) ? specific : [specific]).includes(m.name) : true));
 
-                    // Check if any migrations exist
-                    if (!migrations?.length) {
-                        let error = new Error(`No ${direction} migrations found`);
-                        onError && await onError(direction, error);
-                        return Promise.reject(error);
+                // Check if any migrations exist
+                if (!migrations?.length) {
+                    let error = new Error(`No ${direction} migrations found`);
+                    onError && await onError(direction, error);
+                    return Promise.reject(error);
+                }
+
+                // Ensure the database is ready for migrations
+                let autoChecksum = await ensure(sql);
+
+                // Run the onBefore hook
+                onBefore && await onBefore(direction, migrations);
+
+                for (let migration of migrations) {
+                    // Read the source + checksum
+                    // XXX: Improve the source read + checksum
+                    let source = readFileSync(migration.file, 'utf8'),
+                        checksum = createHash('sha256').update(source).digest();
+
+                    // Check if the migration has already been applied
+                    if ((await sql`
+                        SELECT EXISTS(SELECT
+                            1
+                        FROM
+                            pgmig_applied_migrations
+                        WHERE
+                            name = ${migration.name}
+                            AND index = ${migration.index}
+                            AND direction = ${direction}
+                            AND obsolete = FALSE
+                            AND checksum = ${checksum})
+                    `)?.[0]?.exists) {
+                        onSkip && await onSkip(direction, migration);
+                        continue; // Skip if the migration has already been applied
                     }
 
-                    // Ensure the database is ready for migrations
-                    let autoChecksum = await ensure(sql);
+                    // Flag obsolete migrations based on directions
+                    await sql`
+                        UPDATE
+                            pgmig_applied_migrations
+                        SET
+                            obsolete = TRUE
+                        WHERE
+                            name = ${migration.name}
+                            AND direction = ${direction == 'up' ? 'down' : 'up'}
+                    `;
 
-                    // Run the onBefore hook
-                    onBefore && await onBefore(direction, migrations);
+                    // Apply the migration within a transaction
+                    await sql.begin(async (tx) => await tx.file(migration.file).then(async (res) => {
+                        onResult && await onResult(direction, migration, res);
+                    }).catch(async (err) => {
+                        onFail && await onFail(direction, migration);
+                    }));
 
-                    for (let migration of migrations) {
-                        // Check if the migration has already been applied
-                        if ((await sql`
-                            SELECT EXISTS(SELECT
-                                1
-                            FROM
-                                pgmig_applied_migrations
-                            WHERE
-                                name = ${migration.name}
-                                AND index = ${migration.index}
-                                AND direction = ${direction}
-                                AND obsolete = FALSE
-                                AND checksum = ${migration.checksum})
-                        `)?.[0]?.exists) {
-                            onSkip && await onSkip(direction, migration);
-                            continue; // Skip if the migration has already been applied
-                        }
+                    // Create the migration record
+                    let mig = {
+                        index: migration.index,
+                        name: migration.name,
+                        source,
+                        direction,
+                        version,
+                        checksum: autoChecksum ? null : checksum
+                    };
 
-                        // Flag obsolete migrations based on directions
-                        await sql`
-                            UPDATE
-                                pgmig_applied_migrations
-                            SET
-                                obsolete = TRUE
-                            WHERE
-                                name = ${migration.name}
-                                AND direction = ${direction == 'up' ? 'down' : 'up'}
-                        `;
+                    // Insert the migration into the applied migrations table
+                    await sql`INSERT INTO pgmig_applied_migrations ${sql(mig, Object.keys(mig))} `;
 
-                        // Run the migration
-                        await sql.file(migration.file).then(async (res) => {
-                            onResult && await onResult(direction, migration, res);
-                        }).catch(async (err) => {
-                            onFail && await onFail(direction, migration);
-                        });
+                    // Call the onApply callback
+                    onApply && await onApply(direction, mig);
+                }
 
-                        // Create the migration record
-                        let mig = {
-                            index: migration.index,
-                            name: migration.name,
-                            source: migration.source,
-                            direction,
-                            version,
-                            checksum: autoChecksum ? null : migration.checksum
-                        };
-
-                        // Insert the migration into the applied migrations table
-                        await sql`INSERT INTO pgmig_applied_migrations  ${sql(mig, Object.keys(mig))} `;
-
-                        // Call the onApply callback
-                        onApply && await onApply(direction, mig);
-                    }
-
-                    // Call the onFinish callback
-                    onFinish && await onFinish(direction);
-                });
+                // Call the onFinish callback
+                onFinish && await onFinish(direction);
             } catch (error) {
                 // Call the onError callback
                 onError && await onError(direction, error);
@@ -160,15 +154,15 @@ export default async function ({
             }
         }
 
-        // Ensure the applied migrations table exists and the checksum is auto-generated
-        async function ensure() {
+        // Ensure the applied migrations table exists and the checksum can be auto-generated
+        async function ensure(sql) {
             // Ensure the applied migrations table exists
             await sql`
                 SELECT
                     'pgmig_applied_migrations'::regclass
             `.catch(async (err) => await sql.file(join(baseDir, '/sql/table.sql')));
 
-            // If pgcrypto is available, ensure the checksum is auto-generated
+            // If pgcrypto is available, ensure the checksum is setup to be auto-generated
             if ((await sql.file(join(baseDir, '/sql/extension_check.sql'), ['pgcrypto']).then(async (check) => {
                 return check?.[0]?.installed;
             })) !== null) {
@@ -185,9 +179,7 @@ export default async function ({
 
         // Purge the migrations table
         async function purge() {
-            return await sql.begin(async (sql) => {
-                return sql.file(join(baseDir, '/sql/purge_pgmig.sql'));
-            })
+            return await sql.begin(async (tx) => tx.file(join(baseDir, '/sql/purge_pgmig.sql')));
         }
 
         // Return the migrations and up/down functions
